@@ -230,11 +230,20 @@ def run():
     freqs_small = np.fft.rfftfreq(gesture_len, d=1.0 / fs)
     band_mask_small = (freqs_small >= f0 - args.band) & (freqs_small <= f0 + args.band)
 
+    # finestra grande per la stima Doppler (delta_f), stessa logica di doppler_hand.py
+    window = np.hanning(buf_len)
+    freqs = np.fft.rfftfreq(buf_len, d=1.0 / fs)
+    band_mask = (freqs >= f0 - args.band) & (freqs <= f0 + args.band)
+    band_freqs = freqs[band_mask]
+
     baseline_amp = None
     smoothed_amp = None
 
     presence = dh.PresenceDetector(threshold_on=args.amp_threshold, threshold_off=args.amp_threshold_off,
-                                    debounce_samples=args.debounce_samples)
+                                    debounce_samples=args.debounce_samples,
+                                    freq_threshold_on=args.freq_shift_threshold or None,
+                                    freq_threshold_off=args.freq_shift_threshold_off,
+                                    freq_gate_ratio=args.freq_gate_ratio)
     detector = dh.GestureDetector(min_tap=args.min_tap, hold_time=args.hold_time, double_gap=args.double_gap)
     poll_ms = max(1, int(args.poll_interval * 1000))
 
@@ -279,8 +288,15 @@ def run():
                         print(f"Calibrazione completata (baseline={baseline_amp:.4g}).\n")
                     continue
 
+                # finestra grande: frequenza di picco per la stima Doppler (fusione in PresenceDetector)
+                spectrum = np.fft.rfft(ring * window)
+                mag = np.abs(spectrum)
+                band_mag = mag[band_mask]
+                peak_freq = band_freqs[np.argmax(band_mag)] if band_mag.size else f0
+                delta_f = peak_freq - f0
+
                 ratio = peak_amp / (baseline_amp + 1e-9)
-                is_active = presence.update(ratio)
+                is_active = presence.update(ratio, delta_f)
 
                 if not is_active:
                     baseline_amp = 0.98 * baseline_amp + 0.02 * peak_amp
@@ -293,7 +309,10 @@ def run():
                         active_since = None
                         presence = dh.PresenceDetector(threshold_on=args.amp_threshold,
                                                         threshold_off=args.amp_threshold_off,
-                                                        debounce_samples=args.debounce_samples)
+                                                        debounce_samples=args.debounce_samples,
+                                                        freq_threshold_on=args.freq_shift_threshold or None,
+                                                        freq_threshold_off=args.freq_shift_threshold_off,
+                                                        freq_gate_ratio=args.freq_gate_ratio)
                         detector = dh.GestureDetector(min_tap=args.min_tap, hold_time=args.hold_time,
                                                        double_gap=args.double_gap)
                         print("\n[ricalibrazione automatica: nessuna variazione per troppo tempo]")
