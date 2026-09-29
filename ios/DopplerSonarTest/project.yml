@@ -1,0 +1,38 @@
+name: DopplerSonarTest
+options:
+  bundleIdPrefix: com.mavaskk
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  SpotifyiOS:
+    url: https://github.com/spotify/ios-sdk
+    exactVersion: 5.0.1
+targets:
+  DopplerSonarTest:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: SpotifyiOS
+        product: SpotifyiOS
+    info:
+      path: Sources/Info.plist
+      properties:
+        NSMicrophoneUsageDescription: "Serve il microfono per rilevare i gesti a ultrasuoni."
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        LSApplicationQueriesSchemes:
+          - spotify
+        CFBundleURLTypes:
+          - CFBundleURLName: com.mavaskk.dopplersonartest
+            CFBundleURLSchemes:
+              - dopplersonar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mavaskk.dopplersonartest
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
