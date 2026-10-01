@@ -18,6 +18,9 @@ Mappatura gesti -> azione (sul contesto attivo, Spotify o YouTube):
   HOLD        -> riavvia la traccia/video corrente; su YouTube, se c'e' una
                  pubblicita' con il pulsante "Salta" visibile, la salta
 
+Se sta squillando una chiamata WhatsApp (app desktop), HOLD la rifiuta, con
+priorita' su Spotify e YouTube.
+
 Contesto: se sia Spotify sia una tab YouTube sono aperti, ha priorita' chi
 sta effettivamente suonando in quel momento; se nessuno dei due sta
 suonando, priorita' a Spotify se e' aperto, altrimenti a YouTube.
@@ -32,6 +35,8 @@ Requisiti (macOS):
   - Per saltare le pubblicita' di YouTube serve anche il permesso di
     Accessibilita' per il terminale; opzionale `pip install
     pyobjc-framework-Quartz` per il fallback con click del mouse.
+  - Per rifiutare le chiamate WhatsApp serve il permesso di Accessibilita'
+    per il terminale.
 
 Uso:
     python media_companion.py
@@ -304,6 +309,94 @@ def youtube_hold(win, tab):
     return f"pulsante 'Salta' trovato ma il click non e' andato a buon fine{hint}"
 
 
+# ---------------------------------------------------------------- WhatsApp
+#
+# Una chiamata in arrivo su WhatsApp desktop e' una finestra separata
+# ("<contatto> - WhatsApp voice call") con i pulsanti accetta/rifiuta,
+# premibili via accessibilita' (System Events). Struttura rilevata con
+# whatsapp_ax_dump.py: rifiuta = AXButton con descrizione "hang up",
+# accetta = AXButton con descrizione "Accept call". Il rifiuto avviene solo
+# se c'e' anche "Accept call", cioe' se la chiamata squilla ancora: a
+# chiamata accettata "hang up" riaggancerebbe.
+# L'accessibilita' vede solo le finestre dello Space corrente, quindi se la
+# finestra della chiamata e' altrove si porta WhatsApp in primo piano prima.
+
+WHATSAPP_BUNDLE_ID = "net.whatsapp.WhatsApp"
+
+# Finestre di WhatsApp sopra il livello normale (la finestra di chiamata ha
+# layer 3) dal window server: vede tutti gli Space e non richiede permessi.
+# Ritorna "none", "onscreen" o "offscreen".
+_WA_CALL_WINDOW_JXA = r'''
+ObjC.import('CoreGraphics');
+var arr = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, 0)));
+var w = arr.filter(function(w){ return /WhatsApp/.test(w.kCGWindowOwnerName || '') && w.kCGWindowLayer > 0; });
+w.length === 0 ? 'none' : (w.some(function(x){ return x.kCGWindowIsOnscreen; }) ? 'onscreen' : 'offscreen');
+'''
+
+_WA_DECLINE_SCRIPT = f'''
+tell application "System Events"
+    tell (first process whose bundle identifier is "{WHATSAPP_BUNDLE_ID}")
+        set callWins to (windows whose name contains "call" or name contains "chiamata")
+        if callWins is {{}} then return "no-call"
+        set els to entire contents of (item 1 of callWins)
+        set declineBtn to missing value
+        set hasAccept to false
+        repeat with e in els
+            try
+                if role of e is "AXButton" then
+                    set d to description of e
+                    if d contains "Accept" then set hasAccept to true
+                    if d is "hang up" then set declineBtn to e
+                end if
+            end try
+        end repeat
+        if not hasAccept then return "in-call"
+        if declineBtn is missing value then return "no-button"
+        perform action "AXPress" of declineBtn
+        return "declined"
+    end tell
+end tell
+'''
+
+
+def _run_jxa(script):
+    try:
+        result = subprocess.run(["osascript", "-l", "JavaScript", "-e", script],
+                                capture_output=True, text=True, timeout=3)
+    except subprocess.TimeoutExpired:
+        return ""
+    return result.stdout.strip()
+
+
+def whatsapp_call_window():
+    """'none', 'onscreen' o 'offscreen' per la finestra di chiamata di WhatsApp."""
+    return _run_jxa(_WA_CALL_WINDOW_JXA) or "none"
+
+
+def whatsapp_decline_call(window_state):
+    """Rifiuta la chiamata che squilla. Ritorna 'declined', 'no-call',
+    'in-call', 'no-button' o 'error'."""
+    prev_app = None
+    if window_state == "offscreen":
+        prev_app = _frontmost_app()
+        _osascript(f'tell application id "{WHATSAPP_BUNDLE_ID}" to activate')
+        time.sleep(0.4)
+    try:
+        out, ok = _osascript(_WA_DECLINE_SCRIPT)
+        return out if ok else "error"
+    finally:
+        if prev_app and "WhatsApp" not in prev_app:
+            _osascript(f'tell application "{prev_app}" to activate')
+
+
+_DECLINE_MESSAGES = {
+    "declined": "chiamata WhatsApp rifiutata",
+    "in-call": "chiamata WhatsApp gia' in corso, nessuna azione",
+    "no-button": "finestra di chiamata trovata ma senza pulsante 'hang up'",
+    "error": "rifiuto non riuscito: serve il permesso di Accessibilita' per il terminale",
+}
+
+
 # ----------------------------------------------------------------- Contesto
 
 def choose_context():
@@ -326,6 +419,15 @@ def choose_context():
 
 
 def handle_gesture(gesture):
+    # Chiamata WhatsApp che squilla: HOLD la rifiuta, prima di Spotify/YouTube.
+    if gesture == "HOLD":
+        window_state = whatsapp_call_window()
+        if window_state != "none":
+            result = whatsapp_decline_call(window_state)
+            if result != "no-call":
+                print(f"\n[whatsapp] {gesture} -> {_DECLINE_MESSAGES.get(result, result)}")
+                return
+
     ctx, target = choose_context()
     if ctx is None:
         print(f"\n[{gesture}] nessun contesto attivo (Spotify/YouTube non trovati)")

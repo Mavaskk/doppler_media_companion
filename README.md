@@ -88,6 +88,8 @@ Configurazione una tantum:
 
 **Saltare le pubblicità su YouTube con HOLD.** Se durante una pubblicità è visibile il pulsante "Salta", HOLD lo preme. Le pubblicità non saltabili non vengono toccate. YouTube ignora i click generati da JavaScript (`isTrusted: false`), quindi il click deve partire dal sistema: lo script porta Chrome in primo piano, mette il focus sul pulsante e invia un tasto Invio vero tramite System Events. Se non basta, e `pyobjc-framework-Quartz` è installato, fa un click vero del mouse sul pulsante e poi rimette il cursore dov'era. Alla fine torna all'app e alla tab che erano attive prima. Per tutto questo serve il permesso di *Accessibilità* per il terminale. Se YouTube rinomina il pulsante, aggiungi la nuova classe a `_SKIP_SELECTORS` in `media_companion.py`.
 
+**Rifiutare le chiamate WhatsApp con HOLD.** Se sta squillando una chiamata nell'app desktop di WhatsApp, HOLD la rifiuta, con priorità su Spotify e YouTube. Lo script riconosce la finestra della chiamata dal window server e preme il pulsante "Decline" tramite l'accessibilità; se la finestra è su un altro Space, porta prima WhatsApp in primo piano. Le chiamate già accettate non vengono toccate. Serve il permesso di *Accessibilità* per il terminale. Se WhatsApp cambia interfaccia, `whatsapp_ax_dump.py` mostra la nuova struttura della finestra di chiamata.
+
 ## App iOS: `ios/DopplerSonarTest`
 
 Porting SwiftUI della stessa pipeline (`SonarEngine`, `SpectrumAnalyzer`, `PresenceDetector`, `GestureDetector`) che controlla Spotify tramite lo **Spotify iOS SDK** (`SPTAppRemote`, v5.0.1 via Swift Package Manager).
