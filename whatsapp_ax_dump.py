@@ -17,7 +17,9 @@ whatsapp_ax_dump.txt.
 L'albero di accessibilita' richiede il permesso di Accessibilita' per il
 terminale (Impostazioni di Sistema -> Privacy e sicurezza -> Accessibilita')
 e vede solo le finestre dello Space corrente: tieni WhatsApp sullo stesso
-Space del terminale, non a schermo intero.
+Space del terminale, non a schermo intero, e non cambiare Space finche'
+la chiamata squilla. Finche' la finestra di chiamata resta visibile, il
+suo albero viene riletto ogni secondo.
 """
 
 import argparse
@@ -136,7 +138,7 @@ def ax_dump(pids, max_depth):
 def main():
     p = argparse.ArgumentParser(description="Osserva le finestre di WhatsApp durante una chiamata in arrivo")
     p.add_argument("--duration", type=float, default=60.0, help="Secondi di osservazione (default 60)")
-    p.add_argument("--max-depth", type=int, default=12, help="Profondita' massima dell'albero AX (default 12)")
+    p.add_argument("--max-depth", type=int, default=30, help="Profondita' massima dell'albero AX (default 30)")
     p.add_argument("--out", default="whatsapp_ax_dump.txt", help="File in cui salvare l'output")
     args = p.parse_args()
 
@@ -165,6 +167,14 @@ def main():
         time.sleep(1.0)
         cur = cg_windows()
         if cur == prev:
+            # finestra di chiamata (layer > 0) ancora visibile: rileggila, la
+            # prima lettura puo' essere stata interrotta
+            call_pids = sorted({line.split("pid=")[1].split()[0] for line in cur
+                                if line.startswith("WhatsApp") and "onscreen=1" in line
+                                and "layer=0 " not in line})
+            if call_pids:
+                emit(f"\n=== t={time.monotonic() - start:.0f}s: finestra di chiamata ancora visibile, rileggo ===")
+                emit(ax_dump(call_pids, max_depth=args.max_depth))
             continue
         t = time.monotonic() - start
         emit(f"\n=== t={t:.0f}s: finestre cambiate ===")
