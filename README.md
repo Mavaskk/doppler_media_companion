@@ -86,6 +86,8 @@ Configurazione una tantum:
 - **Chrome**: abilita *View → Developer → Allow JavaScript from Apple Events*.
 - **Permessi macOS**: alla prima esecuzione concedi il controllo di Spotify, Google Chrome e System Events (*Impostazioni di Sistema → Privacy e sicurezza → Automazione*) e l'accesso al microfono.
 
+**Rifiutare le chiamate WhatsApp con HOLD.** Se sta squillando una chiamata nell'app desktop di WhatsApp, HOLD la rifiuta, con priorità su Spotify e YouTube. Lo script riconosce la finestra della chiamata dal window server e preme il pulsante "Decline" tramite l'accessibilità; se la finestra è su un altro Space, porta prima WhatsApp in primo piano. Le chiamate già accettate non vengono toccate. Serve il permesso di *Accessibilità* per il terminale. Se WhatsApp cambia interfaccia, `whatsapp_ax_dump.py` mostra la nuova struttura della finestra di chiamata.
+
 ## App iOS: `ios/DopplerSonarTest`
 
 Porting SwiftUI della stessa pipeline (`SonarEngine`, `SpectrumAnalyzer`, `PresenceDetector`, `GestureDetector`) che controlla Spotify tramite lo **Spotify iOS SDK** (`SPTAppRemote`, v5.0.1 via Swift Package Manager).
