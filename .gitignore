@@ -6,3 +6,6 @@ __pycache__/
 xcuserdata/
 *.xcuserstate
 DerivedData/
+
+# output di whatsapp_ax_dump.py (puo contenere testo delle chat)
+whatsapp_ax_dump.txt
