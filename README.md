@@ -8,7 +8,7 @@ Lo speaker emette un tono continuo a ~19–20 kHz (quasi inudibile). La mano vic
 |---|---|---|
 | **TAP SINGOLO** | avvicina e allontana subito la mano | play / pause |
 | **DOPPIO TAP** | due contatti entro 0,4 s | traccia / video successivo |
-| **HOLD** | tieni la mano vicina per 2 s | riavvia la traccia / il video |
+| **HOLD** | tieni la mano vicina per 2 s | riavvia la traccia / il video (su YouTube salta la pubblicità, se è saltabile) |
 
 ## Contenuto della repo
 
@@ -85,6 +85,8 @@ Configurazione una tantum:
 - **Spotify**: non serve nulla, viene controllato via AppleScript.
 - **Chrome**: abilita *View → Developer → Allow JavaScript from Apple Events*.
 - **Permessi macOS**: alla prima esecuzione concedi il controllo di Spotify, Google Chrome e System Events (*Impostazioni di Sistema → Privacy e sicurezza → Automazione*) e l'accesso al microfono.
+
+**Saltare le pubblicità su YouTube con HOLD.** Se durante una pubblicità è visibile il pulsante "Salta", HOLD lo preme. Le pubblicità non saltabili non vengono toccate. YouTube ignora i click generati da JavaScript (`isTrusted: false`), quindi il click deve partire dal sistema: lo script porta Chrome in primo piano, mette il focus sul pulsante e invia un tasto Invio vero tramite System Events. Se non basta, e `pyobjc-framework-Quartz` è installato, fa un click vero del mouse sul pulsante e poi rimette il cursore dov'era. Alla fine torna all'app e alla tab che erano attive prima. Per tutto questo serve il permesso di *Accessibilità* per il terminale. Se YouTube rinomina il pulsante, aggiungi la nuova classe a `_SKIP_SELECTORS` in `media_companion.py`.
 
 ## App iOS: `ios/DopplerSonarTest`
 
