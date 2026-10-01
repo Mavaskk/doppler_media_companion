@@ -15,7 +15,8 @@ GestureDetector e parse_args, importate direttamente da doppler_hand.
 Mappatura gesti -> azione (sul contesto attivo, Spotify o YouTube):
   TAP SINGOLO -> play/pause
   DOPPIO TAP  -> traccia/video successivo
-  HOLD        -> riavvia la traccia/video corrente
+  HOLD        -> riavvia la traccia/video corrente; su YouTube, se c'e' una
+                 pubblicita' con il pulsante "Salta" visibile, la salta
 
 Contesto: se sia Spotify sia una tab YouTube sono aperti, ha priorita' chi
 sta effettivamente suonando in quel momento; se nessuno dei due sta
@@ -28,6 +29,9 @@ Requisiti (macOS):
   - Alla prima esecuzione macOS chiedera' il permesso di controllare
     Spotify / Google Chrome / System Events (Impostazioni di Sistema ->
     Privacy e sicurezza -> Automazione): va concesso.
+  - Per saltare le pubblicita' di YouTube serve anche il permesso di
+    Accessibilita' per il terminale; opzionale `pip install
+    pyobjc-framework-Quartz` per il fallback con click del mouse.
 
 Uso:
     python media_companion.py
@@ -147,6 +151,159 @@ def youtube_restart(win, tab):
     _chrome_exec_js(win, tab, js)
 
 
+# ------------------------------------------------------- YouTube: salta ad
+#
+# YouTube ignora i click generati da JavaScript (element.click() ha
+# isTrusted=false), quindi trovare il pulsante "Salta" non basta: il click
+# deve arrivare dal sistema operativo. Si prova in ordine:
+#   1. click() da JS (costa poco, nel caso YouTube lo accetti)
+#   2. focus sul pulsante + tasto Invio vero inviato da System Events
+#   3. click vero del mouse alle coordinate del pulsante (Quartz, se pyobjc
+#      e' installato), riportando poi il cursore dov'era
+# Il 2 e il 3 richiedono il permesso di Accessibilita' per il terminale
+# (Impostazioni di Sistema -> Privacy e sicurezza -> Accessibilita').
+# Le pubblicita' non saltabili non vengono toccate.
+
+try:
+    import Quartz
+except ImportError:
+    Quartz = None
+
+# Classi del pulsante usate da YouTube nel tempo; se smette di funzionare,
+# ispeziona il pulsante "Salta" in DevTools e aggiungi qui la nuova classe.
+_SKIP_SELECTORS = [
+    ".ytp-skip-ad-button",
+    ".ytp-ad-skip-button-modern",
+    ".ytp-ad-skip-button",
+    ".videoAdUiSkipButton",
+]
+
+# f(): null se non c'e' pubblicita', false se c'e' ma senza pulsante "Salta"
+# visibile, altrimenti il pulsante. Niente doppi apici: il JS finisce dentro
+# una stringa AppleScript.
+_FIND_SKIP_JS = (
+    "function f(){"
+    "var p=document.querySelector('#movie_player');"
+    "if(!p||!p.classList.contains('ad-showing'))return null;"
+    "var s=[" + ",".join(f"'{sel}'" for sel in _SKIP_SELECTORS) + "];"
+    "for(var i=0;i<s.length;i++){var b=p.querySelector(s[i]);if(b&&b.offsetParent!==null)return b;}"
+    "var bs=p.querySelectorAll('button');"
+    "for(var j=0;j<bs.length;j++){"
+    "var t=((bs[j].textContent||'')+' '+(bs[j].getAttribute('aria-label')||'')).toLowerCase();"
+    "if((t.indexOf('skip')>=0||t.indexOf('salta')>=0)&&bs[j].offsetParent!==null)return bs[j];}"
+    "return false;}"
+)
+
+
+def _skip_js(body):
+    return "(function(){" + _FIND_SKIP_JS + "var b=f();" + body + "})()"
+
+
+def youtube_ad_state(win, tab):
+    """Ritorna 'no-ad', 'not-skippable' o 'skippable'."""
+    out, ok = _chrome_exec_js(win, tab, _skip_js(
+        "return b===null?'no-ad':(b===false?'not-skippable':'skippable');"))
+    return out if ok else "no-ad"
+
+
+def _ad_skipped(win, tab):
+    time.sleep(0.4)
+    return youtube_ad_state(win, tab) != "skippable"
+
+
+def _frontmost_app():
+    out, ok = _osascript('tell application "System Events" to get name of first application process whose frontmost is true')
+    return out if ok else None
+
+
+def _bring_tab_to_front(win, tab):
+    """Porta in primo piano Chrome con la tab YouTube attiva. Ritorna lo
+    stato precedente per ripristinarlo; dopo, la finestra e' la numero 1."""
+    prev_app = _frontmost_app()
+    prev_tab, _ = _osascript(f'tell application "Google Chrome" to get active tab index of window {win}')
+    _osascript(f'''
+tell application "Google Chrome"
+    set active tab index of window {win} to {tab}
+    set index of window {win} to 1
+    activate
+end tell
+''')
+    time.sleep(0.2)
+    return prev_app, prev_tab
+
+
+def _restore_front(prev_app, prev_tab, tab):
+    if prev_tab and prev_tab != str(tab):
+        _osascript(f'tell application "Google Chrome" to set active tab index of window 1 to {prev_tab}')
+    if prev_app and prev_app != "Google Chrome":
+        _osascript(f'tell application "{prev_app}" to activate')
+
+
+def _skip_with_enter(tab):
+    out, ok = _chrome_exec_js(1, tab, _skip_js(
+        "if(!b)return 'gone';b.focus();return document.activeElement===b?'focused':'nofocus';"))
+    if not ok or out != "focused":
+        return False
+    _, ok = _osascript('tell application "System Events" to key code 36')  # Invio
+    if not ok:
+        print("\n[youtube] tasto Invio non inviato: concedi l'Accessibilita' al terminale")
+    return ok
+
+
+def _skip_with_mouse(tab):
+    if Quartz is None:
+        return False
+    # coordinate di schermo del centro del pulsante (assume zoom pagina 100%
+    # e DevTools non agganciati in basso)
+    out, ok = _chrome_exec_js(1, tab, _skip_js(
+        "if(!b)return '';var r=b.getBoundingClientRect();"
+        "return Math.round(window.screenX+r.left+r.width/2)+','+"
+        "Math.round(window.screenY+(window.outerHeight-window.innerHeight)+r.top+r.height/2);"))
+    if not ok or "," not in out:
+        return False
+    x, y = (float(v) for v in out.split(","))
+    old_pos = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+    for event_type in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
+        event = Quartz.CGEventCreateMouseEvent(None, event_type, (x, y), Quartz.kCGMouseButtonLeft)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+        time.sleep(0.05)
+    Quartz.CGWarpMouseCursorPosition(old_pos)
+    return True
+
+
+def youtube_skip_ad(win, tab):
+    """Prova a premere "Salta" con i metodi in ordine. Ritorna il metodo che
+    ha funzionato, o None."""
+    _chrome_exec_js(win, tab, _skip_js("if(b)b.click();"))
+    if _ad_skipped(win, tab):
+        return "click JS"
+
+    prev_app, prev_tab = _bring_tab_to_front(win, tab)
+    try:
+        if _skip_with_enter(tab) and _ad_skipped(1, tab):
+            return "tasto Invio"
+        if _skip_with_mouse(tab) and _ad_skipped(1, tab):
+            return "click mouse"
+        return None
+    finally:
+        _restore_front(prev_app, prev_tab, tab)
+
+
+def youtube_hold(win, tab):
+    """HOLD su YouTube: salta la pubblicita' se si puo', altrimenti riavvia il video."""
+    state = youtube_ad_state(win, tab)
+    if state == "no-ad":
+        youtube_restart(win, tab)
+        return "video riavviato"
+    if state == "not-skippable":
+        return "pubblicita' non (ancora) saltabile, nessuna azione"
+    method = youtube_skip_ad(win, tab)
+    if method:
+        return f"pubblicita' saltata ({method})"
+    hint = "" if Quartz else "; installa pyobjc-framework-Quartz per il fallback col mouse"
+    return f"pulsante 'Salta' trovato ma il click non e' andato a buon fine{hint}"
+
+
 # ----------------------------------------------------------------- Contesto
 
 def choose_context():
@@ -185,12 +342,12 @@ def handle_gesture(gesture):
         action = {
             "TAP SINGOLO": lambda: youtube_play_pause(win, tab),
             "DOPPIO TAP": lambda: youtube_next(win, tab),
-            "HOLD": lambda: youtube_restart(win, tab),
+            "HOLD": lambda: youtube_hold(win, tab),
         }.get(gesture)
 
     if action:
-        action()
-        print(f"\n[{ctx}] {gesture} -> eseguito")
+        result = action()
+        print(f"\n[{ctx}] {gesture} -> {result or 'eseguito'}")
 
 
 # --------------------------------------------------------------- Sonar loop
