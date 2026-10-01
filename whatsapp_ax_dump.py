@@ -93,10 +93,23 @@ on dumpEl(el, depth, maxDepth)
     return out
 end dumpEl
 
+on isCallWindow(w)
+    tell application "System Events"
+        set n to ""
+        try
+            set n to name of w as text
+        end try
+    end tell
+    return (n contains "call") or (n contains "chiamata")
+end isCallWindow
+
+-- argv: maxDepth, onlyCalls (1 = per WhatsApp leggi solo le finestre di
+-- chiamata, la finestra principale con le chat e' enorme e lentissima), pid...
 on run argv
     set maxDepth to (item 1 of argv) as integer
+    set onlyCalls to (item 2 of argv) is "1"
     set out to ""
-    repeat with i from 2 to count of argv
+    repeat with i from 3 to count of argv
         set thePid to (item i of argv) as integer
         try
             tell application "System Events"
@@ -106,7 +119,11 @@ on run argv
             end tell
             set out to out & "== " & pName & " (pid " & thePid & "): " & (count of wins) & " finestre AX" & linefeed
             repeat with w in wins
-                set out to out & my dumpEl(w, 0, maxDepth)
+                if onlyCalls and (pName contains "WhatsApp") and not my isCallWindow(w) then
+                    set out to out & my describe(w) & "  (non e' una chiamata, salto)" & linefeed
+                else
+                    set out to out & my dumpEl(w, 0, maxDepth)
+                end if
             end repeat
         on error e number num
             set out to out & "== pid " & thePid & ": errore " & num & " " & e & linefeed
@@ -130,8 +147,11 @@ def cg_windows():
     return set(line for line in out.splitlines() if line)
 
 
-def ax_dump(pids, max_depth):
-    out, err = _run(["osascript", "-", str(max_depth), *map(str, pids)], stdin=_AX_DUMP_SCRIPT)
+def ax_dump(pids, max_depth, only_calls=True):
+    out, err = _run(["osascript", "-", str(max_depth), "1" if only_calls else "0", *map(str, pids)],
+                    stdin=_AX_DUMP_SCRIPT, timeout=30)
+    if err == "timeout":
+        err = "lettura AX oltre 30 s, interrotta"
     return out + (f"\n[stderr] {err}" if err else "")
 
 
@@ -159,10 +179,19 @@ def main():
     emit("\n".join(sorted(prev)) or "(nessuna)")
     pids = sorted({line.split("pid=")[1].split()[0] for line in prev})
     emit("\n--- albero AX iniziale ---")
-    emit(ax_dump(pids, max_depth=2))
+    emit(ax_dump(pids, max_depth=2, only_calls=False))
 
     emit(f"\nOsservo per {args.duration:.0f} s: fatti chiamare su WhatsApp ora e lascia squillare...")
     start = time.monotonic()
+    try:
+        _watch(args, emit, prev, start)
+    except KeyboardInterrupt:
+        emit("\nInterrotto dall'utente.")
+    emit(f"\nFine. Output salvato in {args.out}")
+    log.close()
+
+
+def _watch(args, emit, prev, start):
     while time.monotonic() - start < args.duration:
         time.sleep(1.0)
         cur = cg_windows()
@@ -185,9 +214,6 @@ def main():
         changed_pids = sorted({line.split("pid=")[1].split()[0] for line in cur ^ prev})
         emit(ax_dump(changed_pids, max_depth=args.max_depth))
         prev = cur
-
-    emit(f"\nFine. Output salvato in {args.out}")
-    log.close()
 
 
 if __name__ == "__main__":
